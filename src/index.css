@@ -1,0 +1,129 @@
+@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Rajdhani:wght@300;400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 240 10% 18%; /* #1A1A2E */
+    --foreground: 0 0% 100%;
+    --card: 240 10% 15%; /* #16213E */
+    --card-foreground: 0 0% 100%;
+    --popover: 240 10% 18%;
+    --popover-foreground: 0 0% 100%;
+    --primary: 15 85% 60%; /* #FF6B35 */
+    --primary-foreground: 0 0% 100%;
+    --secondary: 51 100% 60%; /* #FFD23F */
+    --secondary-foreground: 240 10% 18%;
+    --muted: 240 10% 15%;
+    --muted-foreground: 220 9% 46%;
+    --accent: 51 100% 60%; /* #FFD23F */
+    --accent-foreground: 240 10% 18%;
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 220 13% 32%;
+    --input: 220 13% 32%;
+    --ring: 15 85% 60%;
+    --radius: 0.5rem;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  
+  body {
+    @apply bg-background text-foreground font-rajdhani;
+
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+  }
+  
+  .font-orbitron {
+    font-family: Orbitron, monospace;
+  }
+  
+  .font-rajdhani {
+    font-family: Rajdhani, sans-serif;
+  }
+}
+
+/* Game-specific styles */
+.game-container {
+  width: 100vw;
+  height: 100vh;
+  position: relative;
+  background: linear-gradient(180deg, hsl(240deg 10% 18%) 0%, hsl(240deg 10% 15%) 100%);
+}
+
+.game-hud {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 100;
+  pointer-events: none;
+}
+
+.game-canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.neon-glow {
+  text-shadow: 0 0 10px currentcolor, 0 0 20px currentcolor, 0 0 30px currentcolor;
+}
+
+.pulse-animation {
+  animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+@keyframes pulse {
+  0%, 100% {
+    opacity: 100%;
+  }
+
+  50% {
+    opacity: 70%;
+  }
+}
+
+.slide-in {
+  animation: slide-in 0.5s ease-out;
+}
+
+@keyframes slide-in {
+  from {
+    transform: translateY(-100%);
+    opacity: 0%;
+  }
+
+  to {
+    transform: translateY(0);
+    opacity: 100%;
+  }
+}
+
+.bounce-in {
+  animation: bounce-in 0.6s cubic-bezier(0.68, -0.55, 0.265, 1.55);
+}
+
+@keyframes bounce-in {
+  0% {
+    transform: scale(0);
+    opacity: 0%;
+  }
+
+  50% {
+    transform: scale(1.1);
+  }
+
+  100% {
+    transform: scale(1);
+    opacity: 100%;
+  }
+}
