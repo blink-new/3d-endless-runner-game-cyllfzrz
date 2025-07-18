@@ -1047,10 +1047,10 @@ export default function Game3D() {
         return newZ;
       });
 
-      // Clean up old objects
-      setObstacles(current => current.filter(obj => obj.position.z < 25));
-      setCoins(current => current.filter(obj => obj.position.z < 25 && !obj.collected));
-      setPowerUps(current => current.filter(obj => obj.position.z < 25 && !obj.collected));
+      // Clean up old objects more aggressively for better performance
+      setObstacles(current => current.filter(obj => obj.position.z < 20));
+      setCoins(current => current.filter(obj => obj.position.z < 20 && !obj.collected));
+      setPowerUps(current => current.filter(obj => obj.position.z < 20 && !obj.collected));
 
     }, 25); // 40 FPS for better performance
 
