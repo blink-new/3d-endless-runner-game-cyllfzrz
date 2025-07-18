@@ -1,140 +1,443 @@
-import { useRef, useEffect } from 'react';
+import { useRef, useEffect, useState, useCallback } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
-import { Box, Sphere, Cylinder } from '@react-three/drei';
+import { Box, Sphere, Cylinder, Plane } from '@react-three/drei';
 import * as THREE from 'three';
-import { GameState, PlayerState, Obstacle, Coin, PowerUp } from '../types/game';
-import { useGameLogic } from '../hooks/useGameLogic';
 
-// Game constants
-const LANE_POSITIONS = [-3, 0, 3];
+// Game constants - optimized for performance
+const LANE_POSITIONS = [-4, 0, 4];
+const GAME_SPEED_BASE = 0.8;
+const COIN_SPAWN_RATE = 0.15;
+const POWERUP_SPAWN_RATE = 0.05;
+const OBSTACLE_SPAWN_RATE = 0.08;
+const COLLISION_DISTANCE = 1.8;
 
-// Player component with enhanced animations
-function Player({ playerState, gameState }: { playerState: PlayerState; gameState: GameState }) {
-  const meshRef = useRef<THREE.Mesh>(null);
+// Time periods configuration with enhanced environments
+const TIME_PERIODS = [
+  {
+    name: 'Space',
+    background: '#0B0B2F',
+    fogColor: '#1A1A4A',
+    trackColor: '#2A2A5A',
+    characterColor: '#00FFFF',
+    coinColor: '#FFFFFF',
+    obstacleColor: '#FF0080',
+    lighting: { ambient: '#4A4AFF', directional: '#FFFFFF' },
+    environmentObjects: ['asteroid', 'planet', 'satellite']
+  },
+  {
+    name: 'Futuristic City',
+    background: '#1A0A2E',
+    fogColor: '#2A1A3E',
+    trackColor: '#3A2A4E',
+    characterColor: '#00FF80',
+    coinColor: '#FFD700',
+    obstacleColor: '#FF4000',
+    lighting: { ambient: '#FF4080', directional: '#80FFFF' },
+    environmentObjects: ['building', 'flyingCar', 'hologram']
+  },
+  {
+    name: 'Prehistoric',
+    background: '#2A1A0A',
+    fogColor: '#4A3A2A',
+    trackColor: '#6A5A4A',
+    characterColor: '#8B4513',
+    coinColor: '#FFD700',
+    obstacleColor: '#654321',
+    lighting: { ambient: '#FF8040', directional: '#FFFF80' },
+    environmentObjects: ['tree', 'rock', 'volcano']
+  },
+  {
+    name: 'Underwater',
+    background: '#0A2A4A',
+    fogColor: '#1A3A5A',
+    trackColor: '#2A4A6A',
+    characterColor: '#40E0D0',
+    coinColor: '#FFD700',
+    obstacleColor: '#8B0000',
+    lighting: { ambient: '#4080FF', directional: '#80FFFF' },
+    environmentObjects: ['coral', 'fish', 'seaweed']
+  },
+  {
+    name: 'Modern Day',
+    background: '#2A2A2A',
+    fogColor: '#4A4A4A',
+    trackColor: '#6A6A6A',
+    characterColor: '#FF6B35',
+    coinColor: '#FFD700',
+    obstacleColor: '#8B0000',
+    lighting: { ambient: '#FFFFFF', directional: '#FFFFFF' },
+    environmentObjects: ['car', 'building', 'tree']
+  },
+  {
+    name: 'Ancient Egypt',
+    background: '#4A3A1A',
+    fogColor: '#6A5A3A',
+    trackColor: '#8A7A5A',
+    characterColor: '#DAA520',
+    coinColor: '#FFD700',
+    obstacleColor: '#8B4513',
+    lighting: { ambient: '#FFD700', directional: '#FFA500' },
+    environmentObjects: ['pyramid', 'sphinx', 'palm']
+  }
+];
+
+// Game state interfaces
+interface GameState {
+  isPlaying: boolean;
+  isPaused: boolean;
+  isGameOver: boolean;
+  score: number;
+  distance: number;
+  speed: number;
+  currentTimePeriod: number;
+  isTransitioning: boolean;
+}
+
+interface PlayerState {
+  lane: number;
+  targetLane: number;
+  isJumping: boolean;
+  isSliding: boolean;
+  jumpTime: number;
+  slideTime: number;
+}
+
+interface GameObject {
+  id: string;
+  lane: number;
+  position: { x: number; y: number; z: number };
+}
+
+interface Obstacle extends GameObject {
+  type: 'barrier' | 'spike' | 'wall';
+  height: number;
+  width: number;
+}
+
+interface Coin extends GameObject {
+  collected: boolean;
+  rotationSpeed: number;
+}
+
+interface PowerUp extends GameObject {
+  type: 'speed' | 'shield' | 'magnet' | 'jump';
+  duration: number;
+  collected: boolean;
+}
+
+// Environment Objects Component
+function EnvironmentObjects({ timePeriod, gameState }: { 
+  timePeriod: typeof TIME_PERIODS[0]; 
+  gameState: GameState;
+}) {
+  const groupRef = useRef<THREE.Group>(null);
+  
+  useFrame(() => {
+    if (!groupRef.current || !gameState.isPlaying) return;
+    
+    const speed = gameState.speed * GAME_SPEED_BASE;
+    
+    groupRef.current.children.forEach((child, index) => {
+      child.position.z += speed * 0.5; // Slower than track for parallax
+      
+      if (child.position.z > 30) {
+        child.position.z = -300 + (index * 60);
+      }
+    });
+  });
+
+  const getEnvironmentObject = (type: string, position: [number, number, number], scale = 1) => {
+    switch (type) {
+      case 'asteroid':
+        return (
+          <Sphere args={[2 * scale]} position={position}>
+            <meshStandardMaterial 
+              color="#666666" 
+              roughness={0.9}
+              metalness={0.1}
+            />
+          </Sphere>
+        );
+      case 'planet':
+        return (
+          <Sphere args={[8 * scale]} position={position}>
+            <meshStandardMaterial 
+              color="#4A90E2" 
+              emissive="#1A3A5A"
+              emissiveIntensity={0.3}
+            />
+          </Sphere>
+        );
+      case 'building':
+        return (
+          <Box args={[3 * scale, 15 * scale, 3 * scale]} position={position}>
+            <meshStandardMaterial 
+              color="#2A2A3A" 
+              emissive="#FF4080"
+              emissiveIntensity={0.2}
+            />
+          </Box>
+        );
+      case 'tree':
+        return (
+          <group position={position}>
+            <Cylinder args={[0.5 * scale, 0.8 * scale, 4 * scale]} position={[0, 2 * scale, 0]}>
+              <meshStandardMaterial color="#8B4513" />
+            </Cylinder>
+            <Sphere args={[2 * scale]} position={[0, 5 * scale, 0]}>
+              <meshStandardMaterial color="#228B22" />
+            </Sphere>
+          </group>
+        );
+      case 'pyramid':
+        return (
+          <Cylinder args={[0, 4 * scale, 8 * scale, 4]} position={position}>
+            <meshStandardMaterial 
+              color="#DAA520" 
+              roughness={0.8}
+            />
+          </Cylinder>
+        );
+      case 'coral':
+        return (
+          <Cylinder args={[0.3 * scale, 1 * scale, 3 * scale, 8]} position={position}>
+            <meshStandardMaterial 
+              color="#FF6347" 
+              emissive="#FF6347"
+              emissiveIntensity={0.3}
+            />
+          </Cylinder>
+        );
+      default:
+        return null;
+    }
+  };
+
+  const environmentObjects = [];
+  for (let i = 0; i < 8; i++) {
+    const objectType = timePeriod.environmentObjects[Math.floor(Math.random() * timePeriod.environmentObjects.length)];
+    const side = Math.random() > 0.5 ? 1 : -1;
+    const x = side * (12 + Math.random() * 8);
+    const y = Math.random() * 5;
+    const z = -i * 60 - Math.random() * 30;
+    const scale = 0.5 + Math.random() * 1;
+    
+    environmentObjects.push(
+      <group key={`env-${i}`}>
+        {getEnvironmentObject(objectType, [x, y, z], scale)}
+      </group>
+    );
+  }
+
+  return <group ref={groupRef}>{environmentObjects}</group>;
+}
+
+// Enhanced Player component with realistic character
+function Player({ playerState, gameState, timePeriod }: { 
+  playerState: PlayerState; 
+  gameState: GameState;
+  timePeriod: typeof TIME_PERIODS[0];
+}) {
+  const bodyRef = useRef<THREE.Mesh>(null);
   const headRef = useRef<THREE.Mesh>(null);
+  const leftArmRef = useRef<THREE.Mesh>(null);
+  const rightArmRef = useRef<THREE.Mesh>(null);
+  const leftLegRef = useRef<THREE.Mesh>(null);
+  const rightLegRef = useRef<THREE.Mesh>(null);
   
   useFrame((state, delta) => {
-    if (!meshRef.current || !headRef.current || !gameState.isPlaying) return;
+    if (!bodyRef.current || !gameState.isPlaying) return;
     
-    // Smooth lane transition
-    const targetX = LANE_POSITIONS[playerState.lane];
-    meshRef.current.position.x = THREE.MathUtils.lerp(meshRef.current.position.x, targetX, delta * 10);
-    headRef.current.position.x = meshRef.current.position.x;
+    const runTime = state.clock.elapsedTime;
+    const targetX = LANE_POSITIONS[playerState.targetLane];
     
-    // Jump animation with arc
+    // Smooth lane transition with proper constraints
+    const currentX = bodyRef.current.position.x;
+    const newX = THREE.MathUtils.lerp(currentX, targetX, delta * 12);
+    bodyRef.current.position.x = newX;
+    
+    // Sync all body parts to main body position
+    [headRef, leftArmRef, rightArmRef, leftLegRef, rightLegRef].forEach(ref => {
+      if (ref.current) {
+        ref.current.position.x = newX;
+      }
+    });
+    
+    // Jump animation
     if (playerState.isJumping) {
-      const jumpProgress = (state.clock.elapsedTime * 10) % (Math.PI);
-      const jumpHeight = Math.sin(jumpProgress) * 2.5 + 0.5;
-      meshRef.current.position.y = jumpHeight;
-      headRef.current.position.y = jumpHeight + 1;
+      const jumpProgress = Math.min(playerState.jumpTime / 0.6, 1);
+      const jumpHeight = Math.sin(jumpProgress * Math.PI) * 3.5;
+      bodyRef.current.position.y = 1 + jumpHeight;
       
-      // Slight forward lean during jump
-      meshRef.current.rotation.x = -0.2;
+      // Update all body parts Y position
+      if (headRef.current) headRef.current.position.y = bodyRef.current.position.y + 1.2;
+      if (leftArmRef.current) leftArmRef.current.position.y = bodyRef.current.position.y + 0.5;
+      if (rightArmRef.current) rightArmRef.current.position.y = bodyRef.current.position.y + 0.5;
+      if (leftLegRef.current) leftLegRef.current.position.y = bodyRef.current.position.y - 0.8;
+      if (rightLegRef.current) rightLegRef.current.position.y = bodyRef.current.position.y - 0.8;
+      
+      // Jumping pose
+      bodyRef.current.rotation.x = -0.2;
+      if (leftArmRef.current) leftArmRef.current.rotation.x = -0.8;
+      if (rightArmRef.current) rightArmRef.current.rotation.x = -0.8;
+      if (leftLegRef.current) leftLegRef.current.rotation.x = 0.5;
+      if (rightLegRef.current) rightLegRef.current.rotation.x = 0.5;
     } else if (playerState.isSliding) {
-      meshRef.current.position.y = -0.3;
-      headRef.current.position.y = 0.7;
-      meshRef.current.rotation.x = 0.3;
-      meshRef.current.scale.y = 0.6;
+      // Sliding animation
+      bodyRef.current.position.y = 0.3;
+      bodyRef.current.rotation.x = 0.8;
+      bodyRef.current.scale.y = 0.6;
+      
+      if (headRef.current) {
+        headRef.current.position.y = 0.8;
+        headRef.current.rotation.x = -0.3;
+      }
+      if (leftArmRef.current) leftArmRef.current.position.y = 0.1;
+      if (rightArmRef.current) rightArmRef.current.position.y = 0.1;
+      if (leftLegRef.current) leftLegRef.current.position.y = -0.2;
+      if (rightLegRef.current) rightLegRef.current.position.y = -0.2;
     } else {
       // Running animation
-      meshRef.current.position.y = 0.5 + Math.sin(state.clock.elapsedTime * 12) * 0.15;
-      headRef.current.position.y = meshRef.current.position.y + 1;
-      meshRef.current.rotation.x = 0;
-      meshRef.current.scale.y = 1;
+      const runCycle = runTime * 12;
+      const bobAmount = Math.sin(runCycle) * 0.15;
       
-      // Arm swing simulation
-      meshRef.current.rotation.z = Math.sin(state.clock.elapsedTime * 8) * 0.1;
+      bodyRef.current.position.y = 1 + bobAmount;
+      bodyRef.current.rotation.x = 0;
+      bodyRef.current.scale.y = 1;
+      
+      if (headRef.current) {
+        headRef.current.position.y = bodyRef.current.position.y + 1.2;
+        headRef.current.rotation.x = 0;
+      }
+      
+      // Arm swinging
+      if (leftArmRef.current) {
+        leftArmRef.current.position.y = bodyRef.current.position.y + 0.5;
+        leftArmRef.current.rotation.x = Math.sin(runCycle) * 0.6;
+      }
+      if (rightArmRef.current) {
+        rightArmRef.current.position.y = bodyRef.current.position.y + 0.5;
+        rightArmRef.current.rotation.x = -Math.sin(runCycle) * 0.6;
+      }
+      
+      // Leg movement
+      if (leftLegRef.current) {
+        leftLegRef.current.position.y = bodyRef.current.position.y - 0.8;
+        leftLegRef.current.rotation.x = Math.sin(runCycle + Math.PI) * 0.5;
+      }
+      if (rightLegRef.current) {
+        rightLegRef.current.position.y = bodyRef.current.position.y - 0.8;
+        rightLegRef.current.rotation.x = Math.sin(runCycle) * 0.5;
+      }
     }
   });
 
   return (
     <group>
-      {/* Player body */}
-      <Box ref={meshRef} args={[0.8, 1.6, 0.4]} position={[0, 0.5, 0]}>
+      {/* Body */}
+      <Box ref={bodyRef} args={[0.8, 1.4, 0.5]} position={[0, 1, 0]}>
         <meshStandardMaterial 
-          color="#FF6B35" 
-          emissive="#FF6B35"
+          color={timePeriod.characterColor}
+          emissive={timePeriod.characterColor}
           emissiveIntensity={0.1}
+          roughness={0.3}
+          metalness={0.2}
         />
       </Box>
       
-      {/* Player head */}
-      <Sphere ref={headRef} args={[0.35]} position={[0, 1.5, 0]}>
+      {/* Head */}
+      <Sphere ref={headRef} args={[0.4]} position={[0, 2.2, 0]}>
         <meshStandardMaterial 
-          color="#FFD23F" 
-          emissive="#FFD23F"
+          color={timePeriod.characterColor}
+          emissive={timePeriod.characterColor}
           emissiveIntensity={0.2}
         />
       </Sphere>
       
       {/* Eyes */}
-      <Sphere args={[0.08]} position={[LANE_POSITIONS[playerState.lane] - 0.1, 1.6, 0.3]}>
-        <meshStandardMaterial color="#000000" />
+      <Sphere args={[0.08]} position={[0.15, 2.3, 0.35]}>
+        <meshStandardMaterial color="#FFFFFF" emissive="#FFFFFF" emissiveIntensity={0.5} />
       </Sphere>
-      <Sphere args={[0.08]} position={[LANE_POSITIONS[playerState.lane] + 0.1, 1.6, 0.3]}>
-        <meshStandardMaterial color="#000000" />
+      <Sphere args={[0.08]} position={[-0.15, 2.3, 0.35]}>
+        <meshStandardMaterial color="#FFFFFF" emissive="#FFFFFF" emissiveIntensity={0.5} />
       </Sphere>
+      
+      {/* Arms */}
+      <Box ref={leftArmRef} args={[0.3, 1, 0.3]} position={[0.6, 1.5, 0]}>
+        <meshStandardMaterial color={timePeriod.characterColor} />
+      </Box>
+      <Box ref={rightArmRef} args={[0.3, 1, 0.3]} position={[-0.6, 1.5, 0]}>
+        <meshStandardMaterial color={timePeriod.characterColor} />
+      </Box>
+      
+      {/* Legs */}
+      <Box ref={leftLegRef} args={[0.35, 1.2, 0.35]} position={[0.25, 0.2, 0]}>
+        <meshStandardMaterial color={timePeriod.characterColor} />
+      </Box>
+      <Box ref={rightLegRef} args={[0.35, 1.2, 0.35]} position={[-0.25, 0.2, 0]}>
+        <meshStandardMaterial color={timePeriod.characterColor} />
+      </Box>
     </group>
   );
 }
 
-// Enhanced track with more visual details
-function Track({ gameState }: { gameState: GameState }) {
+// Enhanced Track with time period theming
+function Track({ gameState, timePeriod }: { 
+  gameState: GameState;
+  timePeriod: typeof TIME_PERIODS[0];
+}) {
   const trackRef = useRef<THREE.Group>(null);
   
   useFrame(() => {
     if (!trackRef.current || !gameState.isPlaying) return;
     
-    const speed = gameState.speed * 0.3;
+    const speed = gameState.speed * GAME_SPEED_BASE;
     
     trackRef.current.children.forEach((child, index) => {
       child.position.z += speed;
       
-      if (child.position.z > 15) {
-        child.position.z = -100 + (index * 25);
+      if (child.position.z > 20) {
+        child.position.z = -200 + (index * 25);
       }
     });
   });
 
   const trackSegments = [];
-  for (let i = 0; i < 8; i++) {
+  for (let i = 0; i < 12; i++) {
     trackSegments.push(
       <group key={i} position={[0, -0.5, -i * 25]}>
         {/* Main track surface */}
-        <Box args={[12, 0.3, 22]} position={[0, 0, 0]}>
-          <meshStandardMaterial color="#2A2A3E" roughness={0.8} />
+        <Box args={[15, 0.4, 23]} position={[0, 0, 0]}>
+          <meshStandardMaterial 
+            color={timePeriod.trackColor}
+            roughness={0.8}
+            metalness={0.2}
+          />
         </Box>
         
         {/* Lane dividers with glow */}
-        <Box args={[0.15, 0.15, 22]} position={[-1.5, 0.15, 0]}>
+        <Box args={[0.2, 0.2, 23]} position={[-2, 0.2, 0]}>
           <meshStandardMaterial 
-            color="#FFD23F" 
-            emissive="#FFD23F"
-            emissiveIntensity={0.3}
+            color={timePeriod.coinColor}
+            emissive={timePeriod.coinColor}
+            emissiveIntensity={0.4}
           />
         </Box>
-        <Box args={[0.15, 0.15, 22]} position={[1.5, 0.15, 0]}>
+        <Box args={[0.2, 0.2, 23]} position={[2, 0.2, 0]}>
           <meshStandardMaterial 
-            color="#FFD23F" 
-            emissive="#FFD23F"
-            emissiveIntensity={0.3}
+            color={timePeriod.coinColor}
+            emissive={timePeriod.coinColor}
+            emissiveIntensity={0.4}
           />
         </Box>
         
         {/* Side barriers */}
-        <Box args={[0.5, 2, 22]} position={[-6, 1, 0]}>
-          <meshStandardMaterial color="#16213E" />
+        <Box args={[1, 3, 23]} position={[-8, 1.5, 0]}>
+          <meshStandardMaterial color={timePeriod.obstacleColor} />
         </Box>
-        <Box args={[0.5, 2, 22]} position={[6, 1, 0]}>
-          <meshStandardMaterial color="#16213E" />
+        <Box args={[1, 3, 23]} position={[8, 1.5, 0]}>
+          <meshStandardMaterial color={timePeriod.obstacleColor} />
         </Box>
-        
-        {/* Track details */}
-        {Array.from({ length: 5 }, (_, j) => (
-          <Box key={j} args={[0.1, 0.05, 2]} position={[0, 0.2, -10 + j * 5]}>
-            <meshStandardMaterial color="#FFD23F" emissive="#FFD23F" emissiveIntensity={0.2} />
-          </Box>
-        ))}
       </group>
     );
   }
@@ -142,55 +445,74 @@ function Track({ gameState }: { gameState: GameState }) {
   return <group ref={trackRef}>{trackSegments}</group>;
 }
 
-// Enhanced obstacle with better visuals
-function ObstacleComponent({ obstacle, gameState }: { obstacle: Obstacle; gameState: GameState }) {
+// Realistic Obstacle component
+function ObstacleComponent({ obstacle, gameState, timePeriod }: { 
+  obstacle: Obstacle; 
+  gameState: GameState;
+  timePeriod: typeof TIME_PERIODS[0];
+}) {
   const meshRef = useRef<THREE.Mesh>(null);
   
   useFrame(() => {
     if (!meshRef.current || !gameState.isPlaying) return;
     
-    meshRef.current.position.z += gameState.speed * 0.3;
+    meshRef.current.position.z += gameState.speed * GAME_SPEED_BASE;
     
-    // Add some rotation for visual interest
-    if (obstacle.obstacleType === 'spike') {
-      meshRef.current.rotation.y += 0.02;
+    // Add rotation for visual interest
+    if (obstacle.type === 'spike') {
+      meshRef.current.rotation.y += 0.05;
     }
   });
 
   const getObstacleGeometry = () => {
-    switch (obstacle.obstacleType) {
+    switch (obstacle.type) {
       case 'barrier':
         return (
           <group>
-            <Box args={[1.2, obstacle.height, 0.6]}>
+            <Box args={[obstacle.width, obstacle.height, 0.8]}>
               <meshStandardMaterial 
-                color="#8B0000" 
-                emissive="#8B0000"
-                emissiveIntensity={0.1}
+                color={timePeriod.obstacleColor}
+                emissive={timePeriod.obstacleColor}
+                emissiveIntensity={0.2}
                 roughness={0.3}
+                metalness={0.7}
               />
             </Box>
             {/* Warning stripes */}
-            <Box args={[1.3, 0.2, 0.7]} position={[0, obstacle.height / 2 - 0.3, 0]}>
-              <meshStandardMaterial color="#FFD23F" emissive="#FFD23F" emissiveIntensity={0.3} />
+            <Box args={[obstacle.width + 0.2, 0.3, 0.9]} position={[0, obstacle.height / 2 - 0.4, 0]}>
+              <meshStandardMaterial 
+                color={timePeriod.coinColor}
+                emissive={timePeriod.coinColor}
+                emissiveIntensity={0.5}
+              />
             </Box>
           </group>
         );
       case 'spike':
         return (
-          <Cylinder args={[0, 0.6, obstacle.height, 6]}>
+          <Cylinder args={[0, 0.8, obstacle.height, 8]}>
             <meshStandardMaterial 
-              color="#8B0000" 
-              emissive="#8B0000"
-              emissiveIntensity={0.2}
-              metalness={0.5}
+              color={timePeriod.obstacleColor}
+              emissive={timePeriod.obstacleColor}
+              emissiveIntensity={0.3}
+              metalness={0.8}
+              roughness={0.2}
             />
           </Cylinder>
         );
+      case 'wall':
+        return (
+          <Box args={[obstacle.width, obstacle.height, 1.2]}>
+            <meshStandardMaterial 
+              color={timePeriod.obstacleColor}
+              roughness={0.9}
+            />
+          </Box>
+        );
       default:
         return (
-          <Box args={[1, obstacle.height, 1]}>
-            <meshStandardMaterial color="#8B0000" />
+          <Box args={[obstacle.width, obstacle.height, 0.8]}>
+            <meshStandardMaterial color={timePeriod.obstacleColor} />
           </Box>
         );
     }
@@ -206,191 +528,271 @@ function ObstacleComponent({ obstacle, gameState }: { obstacle: Obstacle; gameSt
   );
 }
 
-// Enhanced coin with animation
-function CoinComponent({ coin, gameState }: { coin: Coin; gameState: GameState }) {
+// Realistic Gold Coin component
+function CoinComponent({ coin, gameState, timePeriod }: { 
+  coin: Coin; 
+  gameState: GameState;
+  timePeriod: typeof TIME_PERIODS[0];
+}) {
   const meshRef = useRef<THREE.Mesh>(null);
+  const glowRef = useRef<THREE.Mesh>(null);
   
   useFrame((state) => {
-    if (!meshRef.current || !gameState.isPlaying) return;
+    if (!meshRef.current || !gameState.isPlaying || coin.collected) return;
     
-    meshRef.current.position.z += gameState.speed * 0.3;
-    meshRef.current.rotation.y = state.clock.elapsedTime * 4;
+    meshRef.current.position.z += gameState.speed * GAME_SPEED_BASE;
+    meshRef.current.rotation.y = state.clock.elapsedTime * coin.rotationSpeed;
     
     // Floating animation
-    meshRef.current.position.y = 1 + Math.sin(state.clock.elapsedTime * 3 + coin.position.z) * 0.3;
+    const floatY = 1.5 + Math.sin(state.clock.elapsedTime * 4 + coin.position.z) * 0.3;
+    meshRef.current.position.y = floatY;
+    
+    if (glowRef.current) {
+      glowRef.current.position.y = floatY;
+      glowRef.current.position.z = meshRef.current.position.z;
+      glowRef.current.rotation.y = meshRef.current.rotation.y;
+    }
   });
+
+  if (coin.collected) return null;
 
   return (
     <group>
+      {/* Main coin */}
       <mesh
         ref={meshRef}
-        position={[LANE_POSITIONS[coin.lane], 1, coin.position.z]}
+        position={[LANE_POSITIONS[coin.lane], 1.5, coin.position.z]}
       >
-        <Cylinder args={[0.4, 0.4, 0.15, 12]} />
+        <Cylinder args={[0.5, 0.5, 0.2, 16]} />
         <meshStandardMaterial 
-          color="#FFD23F" 
-          emissive="#FFD23F" 
-          emissiveIntensity={0.4}
-          metalness={0.8}
-          roughness={0.2}
+          color={timePeriod.coinColor}
+          emissive={timePeriod.coinColor}
+          emissiveIntensity={0.6}
+          metalness={1}
+          roughness={0.1}
         />
       </mesh>
       
       {/* Glow effect */}
+      <mesh
+        ref={glowRef}
+        position={[LANE_POSITIONS[coin.lane], 1.5, coin.position.z]}
+      >
+        <Cylinder args={[0.8, 0.8, 0.1, 16]} />
+        <meshStandardMaterial 
+          color={timePeriod.coinColor}
+          emissive={timePeriod.coinColor}
+          emissiveIntensity={0.3}
+          transparent
+          opacity={0.4}
+        />
+      </mesh>
+      
+      {/* Point light for glow */}
       <pointLight 
-        position={[LANE_POSITIONS[coin.lane], 1, coin.position.z]} 
-        color="#FFD23F" 
-        intensity={0.5} 
-        distance={3}
+        position={[LANE_POSITIONS[coin.lane], 1.5, coin.position.z]} 
+        color={timePeriod.coinColor}
+        intensity={1} 
+        distance={5}
       />
     </group>
   );
 }
 
-// Power-up component
-function PowerUpComponent({ powerUp, gameState }: { powerUp: PowerUp; gameState: GameState }) {
+// Realistic Power-up component
+function PowerUpComponent({ powerUp, gameState, timePeriod }: { 
+  powerUp: PowerUp; 
+  gameState: GameState;
+  timePeriod: typeof TIME_PERIODS[0];
+}) {
   const meshRef = useRef<THREE.Mesh>(null);
+  const coreRef = useRef<THREE.Mesh>(null);
   
   useFrame((state) => {
-    if (!meshRef.current || !gameState.isPlaying) return;
+    if (!meshRef.current || !gameState.isPlaying || powerUp.collected) return;
     
-    meshRef.current.position.z += gameState.speed * 0.3;
+    meshRef.current.position.z += gameState.speed * GAME_SPEED_BASE;
     meshRef.current.rotation.x = state.clock.elapsedTime * 2;
-    meshRef.current.rotation.y = state.clock.elapsedTime * 3;
+    meshRef.current.rotation.y = state.clock.elapsedTime * 1.5;
+    
+    if (coreRef.current) {
+      coreRef.current.rotation.x = -state.clock.elapsedTime * 1.5;
+      coreRef.current.rotation.z = state.clock.elapsedTime * 3;
+    }
     
     // Floating animation
-    meshRef.current.position.y = 1.5 + Math.sin(state.clock.elapsedTime * 4) * 0.4;
+    const floatY = 2 + Math.sin(state.clock.elapsedTime * 4) * 0.4;
+    meshRef.current.position.y = floatY;
   });
 
   const getPowerUpColor = () => {
-    switch (powerUp.powerType) {
+    switch (powerUp.type) {
       case 'speed': return '#00FF00';
       case 'shield': return '#0080FF';
       case 'magnet': return '#FF00FF';
+      case 'jump': return '#FFFF00';
       default: return '#FFFFFF';
     }
   };
 
+  if (powerUp.collected) return null;
+
   return (
     <group>
+      {/* Outer shell */}
       <mesh
         ref={meshRef}
-        position={[LANE_POSITIONS[powerUp.lane], 1.5, powerUp.position.z]}
+        position={[LANE_POSITIONS[powerUp.lane], 2, powerUp.position.z]}
       >
-        <Box args={[0.6, 0.6, 0.6]} />
+        <Box args={[0.8, 0.8, 0.8]} />
         <meshStandardMaterial 
-          color={getPowerUpColor()} 
-          emissive={getPowerUpColor()} 
-          emissiveIntensity={0.5}
+          color={getPowerUpColor()}
+          emissive={getPowerUpColor()}
+          emissiveIntensity={0.4}
           transparent
-          opacity={0.8}
+          opacity={0.7}
+          metalness={0.5}
+        />
+      </mesh>
+      
+      {/* Inner core */}
+      <mesh
+        ref={coreRef}
+        position={[LANE_POSITIONS[powerUp.lane], 2, powerUp.position.z]}
+      >
+        <Sphere args={[0.3]} />
+        <meshStandardMaterial 
+          color={getPowerUpColor()}
+          emissive={getPowerUpColor()}
+          emissiveIntensity={0.8}
         />
       </mesh>
       
       {/* Glow effect */}
       <pointLight 
-        position={[LANE_POSITIONS[powerUp.lane], 1.5, powerUp.position.z]} 
-        color={getPowerUpColor()} 
-        intensity={0.8} 
-        distance={4}
+        position={[LANE_POSITIONS[powerUp.lane], 2, powerUp.position.z]} 
+        color={getPowerUpColor()}
+        intensity={1.2} 
+        distance={6}
       />
     </group>
   );
 }
 
-// Camera controller with smooth following
-function CameraController({ playerState, gameState }: { playerState: PlayerState; gameState: GameState }) {
+// Camera controller
+function CameraController({ playerState, gameState }: { 
+  playerState: PlayerState; 
+  gameState: GameState; 
+}) {
   const { camera } = useThree();
   
   useFrame(() => {
     if (!gameState.isPlaying) return;
     
-    // Follow player with smooth interpolation
-    const targetX = LANE_POSITIONS[playerState.lane] * 0.4;
+    // Follow player smoothly
+    const targetX = LANE_POSITIONS[playerState.targetLane] * 0.25;
     camera.position.x = THREE.MathUtils.lerp(camera.position.x, targetX, 0.08);
     
-    // Dynamic camera height based on player action
-    let targetY = 2.5;
-    if (playerState.isJumping) targetY = 3.2;
-    if (playerState.isSliding) targetY = 1.8;
+    // Dynamic camera height
+    let targetY = 3;
+    if (playerState.isJumping) targetY = 3.5;
+    if (playerState.isSliding) targetY = 2.5;
     
-    camera.position.y = THREE.MathUtils.lerp(camera.position.y, targetY, 0.1);
-    camera.position.z = 6;
+    camera.position.y = THREE.MathUtils.lerp(camera.position.y, targetY, 0.06);
+    camera.position.z = 8;
     
-    // Look ahead with slight offset
-    camera.lookAt(LANE_POSITIONS[playerState.lane] * 0.2, 1.5, -15);
+    // Look ahead
+    camera.lookAt(LANE_POSITIONS[playerState.targetLane] * 0.15, 2, -15);
   });
 
   return null;
 }
 
-// Main 3D Scene
+// Main Game Scene
 function GameScene({ 
   gameState, 
   playerState, 
   obstacles, 
   coins, 
-  powerUps 
+  powerUps,
+  timePeriod
 }: {
   gameState: GameState;
   playerState: PlayerState;
   obstacles: Obstacle[];
   coins: Coin[];
   powerUps: PowerUp[];
+  timePeriod: typeof TIME_PERIODS[0];
 }) {
   return (
     <>
-      {/* Enhanced lighting */}
-      <ambientLight intensity={0.3} color="#1A1A2E" />
+      {/* Dynamic lighting based on time period */}
+      <ambientLight intensity={0.4} color={timePeriod.lighting.ambient} />
       <directionalLight 
-        position={[10, 15, 5]} 
+        position={[15, 20, 10]} 
         intensity={1.2} 
-        color="#FFFFFF"
+        color={timePeriod.lighting.directional}
         castShadow
-        shadow-mapSize-width={2048}
-        shadow-mapSize-height={2048}
       />
-      <pointLight position={[0, 8, -10]} intensity={0.8} color="#FF6B35" />
-      <pointLight position={[0, 5, -30]} intensity={0.6} color="#FFD23F" />
+      <pointLight position={[0, 10, -15]} intensity={0.8} color={timePeriod.lighting.ambient} />
       
-      {/* Camera controller */}
       <CameraController playerState={playerState} gameState={gameState} />
       
-      {/* Game objects */}
-      <Track gameState={gameState} />
-      <Player playerState={playerState} gameState={gameState} />
+      <Track gameState={gameState} timePeriod={timePeriod} />
+      <Player playerState={playerState} gameState={gameState} timePeriod={timePeriod} />
+      <EnvironmentObjects timePeriod={timePeriod} gameState={gameState} />
       
-      {/* Dynamic objects */}
       {obstacles.map((obstacle) => (
-        <ObstacleComponent key={obstacle.id} obstacle={obstacle} gameState={gameState} />
+        <ObstacleComponent 
+          key={obstacle.id} 
+          obstacle={obstacle} 
+          gameState={gameState}
+          timePeriod={timePeriod}
+        />
       ))}
       
       {coins.map((coin) => (
-        <CoinComponent key={coin.id} coin={coin} gameState={gameState} />
+        <CoinComponent 
+          key={coin.id} 
+          coin={coin} 
+          gameState={gameState}
+          timePeriod={timePeriod}
+        />
       ))}
       
       {powerUps.map((powerUp) => (
-        <PowerUpComponent key={powerUp.id} powerUp={powerUp} gameState={gameState} />
+        <PowerUpComponent 
+          key={powerUp.id} 
+          powerUp={powerUp} 
+          gameState={gameState}
+          timePeriod={timePeriod}
+        />
       ))}
       
-      {/* Environment effects */}
-      <fog attach="fog" args={['#1A1A2E', 25, 120]} />
+      {/* Dynamic fog */}
+      <fog attach="fog" args={[timePeriod.fogColor, 25, 120]} />
     </>
   );
 }
 
 // Enhanced HUD
-function GameHUD({ gameState }: { gameState: GameState }) {
+function GameHUD({ gameState, timePeriod }: { 
+  gameState: GameState;
+  timePeriod: typeof TIME_PERIODS[0];
+}) {
   return (
     <div className="game-hud">
       {/* Main score display */}
       <div className="absolute top-6 left-1/2 transform -translate-x-1/2 z-50">
         <div className="score-display rounded-xl px-8 py-4 text-center slide-in">
-          <div className="font-game text-3xl font-bold text-primary mb-2 glow-primary">
+          <div className="font-orbitron text-4xl font-bold text-primary mb-2 glow-primary">
             {gameState.score.toLocaleString()}
           </div>
-          <div className="font-sans text-lg text-accent">
+          <div className="font-rajdhani text-lg text-accent">
             {Math.floor(gameState.distance)}m
+          </div>
+          <div className="font-rajdhani text-sm text-foreground mt-1">
+            {timePeriod.name}
           </div>
         </div>
       </div>
@@ -398,34 +800,31 @@ function GameHUD({ gameState }: { gameState: GameState }) {
       {/* Speed indicator */}
       <div className="absolute top-6 right-6 z-50">
         <div className="score-display rounded-lg px-4 py-3">
-          <div className="font-game text-sm text-primary mb-1">SPEED</div>
-          <div className="font-game text-xl font-bold text-accent">
+          <div className="font-orbitron text-sm text-primary mb-1">SPEED</div>
+          <div className="font-orbitron text-xl font-bold text-accent">
             {gameState.speed.toFixed(1)}x
           </div>
         </div>
       </div>
       
-      {/* Lives indicator */}
-      <div className="absolute top-6 left-6 z-50">
-        <div className="score-display rounded-lg px-4 py-3">
-          <div className="font-game text-sm text-primary mb-1">LIVES</div>
-          <div className="flex space-x-1">
-            {Array.from({ length: 3 }, (_, i) => (
-              <div
-                key={i}
-                className={`w-3 h-3 rounded-full ${
-                  i < gameState.lives ? 'bg-primary glow-primary' : 'bg-muted'
-                }`}
-              />
-            ))}
+      {/* Time period transition indicator */}
+      {gameState.isTransitioning && (
+        <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 z-60">
+          <div className="text-center">
+            <div className="font-orbitron text-6xl font-bold text-primary glow-primary pulse-glow mb-4">
+              TRAVELING THROUGH TIME
+            </div>
+            <div className="font-orbitron text-3xl text-accent">
+              Entering {timePeriod.name}
+            </div>
           </div>
         </div>
-      </div>
+      )}
       
       {/* Pause indicator */}
       {gameState.isPaused && (
         <div className="absolute inset-0 bg-background/50 backdrop-blur-sm flex items-center justify-center z-40">
-          <div className="font-game text-4xl font-bold text-primary glow-primary pulse-glow">
+          <div className="font-orbitron text-4xl font-bold text-primary glow-primary pulse-glow">
             PAUSED
           </div>
         </div>
@@ -447,18 +846,18 @@ function GameOverScreen({
   return (
     <div className="absolute inset-0 bg-background/95 backdrop-blur-md flex items-center justify-center z-50">
       <div className="text-center space-y-8 p-10 rounded-xl score-display max-w-md">
-        <h1 className="font-game text-5xl font-bold text-primary glow-primary pulse-glow">
+        <h1 className="font-orbitron text-5xl font-bold text-primary glow-primary pulse-glow">
           GAME OVER
         </h1>
         
         <div className="space-y-4">
-          <div className="font-game text-3xl text-accent">
+          <div className="font-orbitron text-3xl text-accent">
             {gameState.score.toLocaleString()}
           </div>
-          <div className="font-sans text-lg text-foreground">
+          <div className="font-rajdhani text-lg text-foreground">
             Distance: {Math.floor(gameState.distance)}m
           </div>
-          <div className="font-sans text-lg text-foreground">
+          <div className="font-rajdhani text-lg text-foreground">
             Max Speed: {gameState.speed.toFixed(1)}x
           </div>
         </div>
@@ -479,13 +878,13 @@ function StartScreen({ onStart }: { onStart: () => void }) {
   return (
     <div className="absolute inset-0 bg-background flex items-center justify-center z-50">
       <div className="text-center space-y-10 p-10 max-w-2xl">
-        <h1 className="font-game text-7xl font-bold text-primary glow-primary pulse-glow">
-          3D RUNNER
+        <h1 className="font-orbitron text-7xl font-bold text-primary glow-primary pulse-glow">
+          TIME RUNNER
         </h1>
         
-        <div className="space-y-6 text-foreground font-sans">
+        <div className="space-y-6 text-foreground font-rajdhani">
           <p className="text-2xl text-accent">
-            Navigate three lanes, avoid obstacles, collect coins!
+            Run through time! Navigate lanes, avoid obstacles, collect coins!
           </p>
           
           <div className="grid grid-cols-2 gap-6 text-lg">
@@ -508,7 +907,8 @@ function StartScreen({ onStart }: { onStart: () => void }) {
           </div>
           
           <div className="text-accent text-lg">
-            Collect coins for 10 points each • Game speeds up over time
+            Every 300m you travel through a new time period!<br/>
+            Collect coins for 10 points each • One life only!
           </div>
         </div>
         
@@ -516,28 +916,251 @@ function StartScreen({ onStart }: { onStart: () => void }) {
           onClick={onStart}
           className="game-button px-16 py-5 rounded-xl text-2xl font-bold"
         >
-          START GAME
+          START TIME TRAVEL
         </button>
       </div>
     </div>
   );
 }
 
-// Main Game Component
+// Main Game Component with optimized logic
 export default function Game3D() {
-  const {
-    gameState,
-    playerState,
-    obstacles,
-    coins,
-    powerUps,
-    movePlayer,
-    jumpPlayer,
-    slidePlayer,
-    togglePause,
-    startGame,
-    restartGame
-  } = useGameLogic();
+  const [gameState, setGameState] = useState<GameState>({
+    isPlaying: false,
+    isPaused: false,
+    isGameOver: false,
+    score: 0,
+    distance: 0,
+    speed: 1,
+    currentTimePeriod: 0,
+    isTransitioning: false
+  });
+
+  const [playerState, setPlayerState] = useState<PlayerState>({
+    lane: 1,
+    targetLane: 1,
+    isJumping: false,
+    isSliding: false,
+    jumpTime: 0,
+    slideTime: 0
+  });
+
+  const [obstacles, setObstacles] = useState<Obstacle[]>([]);
+  const [coins, setCoins] = useState<Coin[]>([]);
+  const [powerUps, setPowerUps] = useState<PowerUp[]>([]);
+  const [lastSpawnZ, setLastSpawnZ] = useState(-50);
+
+  const currentTimePeriod = TIME_PERIODS[gameState.currentTimePeriod];
+
+  // Optimized game loop - reduced frequency for better performance
+  useEffect(() => {
+    if (!gameState.isPlaying || gameState.isPaused) return;
+
+    const gameLoop = setInterval(() => {
+      setGameState(prev => {
+        const newDistance = prev.distance + prev.speed * 0.6;
+        const newSpeed = Math.min(1 + newDistance / 1000, 4); // Max speed 4x
+        
+        // Check for time period transition every 300m
+        const newTimePeriodIndex = Math.floor(newDistance / 300);
+        const shouldTransition = newTimePeriodIndex !== Math.floor(prev.distance / 300);
+        
+        if (shouldTransition) {
+          const availablePeriods = TIME_PERIODS.map((_, i) => i).filter(i => i !== prev.currentTimePeriod);
+          const randomIndex = availablePeriods[Math.floor(Math.random() * availablePeriods.length)];
+          
+          setTimeout(() => {
+            setGameState(current => ({ ...current, isTransitioning: false }));
+          }, 2500);
+          
+          return {
+            ...prev,
+            distance: newDistance,
+            speed: newSpeed,
+            currentTimePeriod: randomIndex,
+            isTransitioning: true
+          };
+        }
+        
+        return {
+          ...prev,
+          distance: newDistance,
+          speed: newSpeed
+        };
+      });
+
+      // Update player state
+      setPlayerState(prev => {
+        const newState = {
+          ...prev,
+          lane: prev.targetLane, // Sync lane with target
+          jumpTime: prev.isJumping ? prev.jumpTime + 0.02 : 0,
+          slideTime: prev.isSliding ? prev.slideTime + 0.02 : 0,
+          isJumping: prev.isJumping && prev.jumpTime < 0.6,
+          isSliding: prev.isSliding && prev.slideTime < 0.8
+        };
+        return newState;
+      });
+
+      // Spawn new objects less frequently for better performance
+      setLastSpawnZ(prev => {
+        const newZ = prev - 2.5;
+        
+        // Spawn obstacles
+        if (Math.random() < OBSTACLE_SPAWN_RATE) {
+          const newObstacle: Obstacle = {
+            id: `obstacle-${Date.now()}-${Math.random()}`,
+            lane: Math.floor(Math.random() * 3),
+            position: { x: 0, y: 0, z: newZ - 15 },
+            type: ['barrier', 'spike', 'wall'][Math.floor(Math.random() * 3)] as any,
+            height: 2 + Math.random() * 1.5,
+            width: 1.5 + Math.random() * 0.5
+          };
+          setObstacles(current => [...current, newObstacle]);
+        }
+        
+        // Spawn coins
+        if (Math.random() < COIN_SPAWN_RATE) {
+          const newCoin: Coin = {
+            id: `coin-${Date.now()}-${Math.random()}`,
+            lane: Math.floor(Math.random() * 3),
+            position: { x: 0, y: 0, z: newZ - 10 },
+            collected: false,
+            rotationSpeed: 3 + Math.random() * 3
+          };
+          setCoins(current => [...current, newCoin]);
+        }
+        
+        // Spawn power-ups
+        if (Math.random() < POWERUP_SPAWN_RATE) {
+          const newPowerUp: PowerUp = {
+            id: `powerup-${Date.now()}-${Math.random()}`,
+            lane: Math.floor(Math.random() * 3),
+            position: { x: 0, y: 0, z: newZ - 20 },
+            type: ['speed', 'shield', 'magnet', 'jump'][Math.floor(Math.random() * 4)] as any,
+            duration: 5000,
+            collected: false
+          };
+          setPowerUps(current => [...current, newPowerUp]);
+        }
+        
+        return newZ;
+      });
+
+      // Clean up old objects
+      setObstacles(current => current.filter(obj => obj.position.z < 25));
+      setCoins(current => current.filter(obj => obj.position.z < 25 && !obj.collected));
+      setPowerUps(current => current.filter(obj => obj.position.z < 25 && !obj.collected));
+
+    }, 25); // 40 FPS for better performance
+
+    return () => clearInterval(gameLoop);
+  }, [gameState.isPlaying, gameState.isPaused]);
+
+  // Optimized collision detection
+  useEffect(() => {
+    if (!gameState.isPlaying) return;
+
+    const playerLane = playerState.lane;
+    const playerZ = 0;
+
+    // Check coin collisions
+    coins.forEach(coin => {
+      if (!coin.collected && 
+          coin.lane === playerLane && 
+          Math.abs(coin.position.z - playerZ) < COLLISION_DISTANCE) {
+        coin.collected = true;
+        setGameState(prev => ({ ...prev, score: prev.score + 10 }));
+        setCoins(current => current.filter(c => c.id !== coin.id));
+      }
+    });
+
+    // Check power-up collisions
+    powerUps.forEach(powerUp => {
+      if (!powerUp.collected && 
+          powerUp.lane === playerLane && 
+          Math.abs(powerUp.position.z - playerZ) < COLLISION_DISTANCE) {
+        powerUp.collected = true;
+        setGameState(prev => ({ ...prev, score: prev.score + 50 }));
+        setPowerUps(current => current.filter(p => p.id !== powerUp.id));
+      }
+    });
+
+    // Check obstacle collisions (only when not jumping/sliding appropriately)
+    obstacles.forEach(obstacle => {
+      if (obstacle.lane === playerLane && 
+          Math.abs(obstacle.position.z - playerZ) < COLLISION_DISTANCE) {
+        
+        // Check if player can avoid obstacle
+        const canJumpOver = playerState.isJumping && obstacle.height < 2.5;
+        const canSlideUnder = playerState.isSliding && obstacle.height > 1.5;
+        
+        if (!canJumpOver && !canSlideUnder) {
+          // Game over on first hit (1 life only)
+          setGameState(prev => ({ ...prev, isGameOver: true }));
+          setObstacles(current => current.filter(o => o.id !== obstacle.id));
+        }
+      }
+    });
+
+  }, [gameState.isPlaying, playerState.lane, playerState.isJumping, playerState.isSliding, obstacles, coins, powerUps]);
+
+  // Optimized controls with proper lane constraints
+  const movePlayer = useCallback((direction: 'left' | 'right') => {
+    if (!gameState.isPlaying || gameState.isPaused) return;
+    
+    setPlayerState(prev => {
+      const newTargetLane = direction === 'left' 
+        ? Math.max(0, prev.targetLane - 1)
+        : Math.min(2, prev.targetLane + 1);
+      
+      return { ...prev, targetLane: newTargetLane };
+    });
+  }, [gameState.isPlaying, gameState.isPaused]);
+
+  const jumpPlayer = useCallback(() => {
+    if (!gameState.isPlaying || gameState.isPaused || playerState.isJumping || playerState.isSliding) return;
+    setPlayerState(prev => ({ ...prev, isJumping: true, jumpTime: 0 }));
+  }, [gameState.isPlaying, gameState.isPaused, playerState.isJumping, playerState.isSliding]);
+
+  const slidePlayer = useCallback(() => {
+    if (!gameState.isPlaying || gameState.isPaused || playerState.isSliding || playerState.isJumping) return;
+    setPlayerState(prev => ({ ...prev, isSliding: true, slideTime: 0 }));
+  }, [gameState.isPlaying, gameState.isPaused, playerState.isSliding, playerState.isJumping]);
+
+  const togglePause = useCallback(() => {
+    if (!gameState.isPlaying) return;
+    setGameState(prev => ({ ...prev, isPaused: !prev.isPaused }));
+  }, [gameState.isPlaying]);
+
+  const startGame = () => {
+    setGameState({
+      isPlaying: true,
+      isPaused: false,
+      isGameOver: false,
+      score: 0,
+      distance: 0,
+      speed: 1,
+      currentTimePeriod: Math.floor(Math.random() * TIME_PERIODS.length),
+      isTransitioning: false
+    });
+    setPlayerState({
+      lane: 1,
+      targetLane: 1,
+      isJumping: false,
+      isSliding: false,
+      jumpTime: 0,
+      slideTime: 0
+    });
+    setObstacles([]);
+    setCoins([]);
+    setPowerUps([]);
+    setLastSpawnZ(-50);
+  };
+
+  const restartGame = () => {
+    startGame();
+  };
 
   // Keyboard controls
   useEffect(() => {
@@ -571,17 +1194,20 @@ export default function Game3D() {
   }, [movePlayer, jumpPlayer, slidePlayer, togglePause]);
 
   return (
-    <div className="game-container">
-      {/* 3D Canvas */}
+    <div className="game-container" style={{ backgroundColor: currentTimePeriod.background }}>
+      {/* 3D Canvas with optimized settings */}
       <Canvas
         className="game-canvas"
-        camera={{ position: [0, 2.5, 6], fov: 75 }}
+        camera={{ position: [0, 3, 8], fov: 75 }}
         gl={{ 
-          antialias: true, 
+          antialias: false, // Disabled for better performance
           alpha: false,
-          powerPreference: "high-performance"
+          powerPreference: "high-performance",
+          stencil: false,
+          depth: true
         }}
-        shadows
+        dpr={[1, 1.5]} // Limit pixel ratio for performance
+        performance={{ min: 0.8 }} // Maintain 80% performance
       >
         <GameScene
           gameState={gameState}
@@ -589,18 +1215,19 @@ export default function Game3D() {
           obstacles={obstacles}
           coins={coins}
           powerUps={powerUps}
+          timePeriod={currentTimePeriod}
         />
       </Canvas>
 
       {/* UI Overlays */}
-      {gameState.isPlaying && <GameHUD gameState={gameState} />}
+      {gameState.isPlaying && <GameHUD gameState={gameState} timePeriod={currentTimePeriod} />}
       {!gameState.isPlaying && !gameState.isGameOver && <StartScreen onStart={startGame} />}
       <GameOverScreen gameState={gameState} onRestart={restartGame} />
       
       {/* Controls hint */}
-      {gameState.isPlaying && !gameState.isPaused && (
+      {gameState.isPlaying && !gameState.isPaused && !gameState.isTransitioning && (
         <div className="absolute bottom-6 left-1/2 transform -translate-x-1/2 z-40">
-          <div className="text-center text-sm text-muted-foreground font-sans bg-background/30 backdrop-blur-sm rounded-lg px-4 py-2">
+          <div className="text-center text-sm text-muted-foreground font-rajdhani bg-background/30 backdrop-blur-sm rounded-lg px-4 py-2">
             ← → Move | ↑ Jump | ↓ Slide | Space Pause
           </div>
         </div>

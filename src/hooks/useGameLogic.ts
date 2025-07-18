@@ -145,7 +145,7 @@ export function useGameLogic() {
           duration: 5000 // 5 seconds
         };
         
-        setPowerUps(prev => [...prev, newPowerUp]);
+        setPowerUps((prev: PowerUp[]) => [...prev, newPowerUp]);
       }
     }
   }, [gameState.speed]);
